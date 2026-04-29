@@ -2,8 +2,11 @@ package com.unityaura.tracker
 
 import android.content.Context
 import com.google.gson.Gson
+import com.unityaura.UnityAuraApplication
+import com.unityaura.db.AppDatabase
 import com.unityaura.db.EventDao
 import com.unityaura.db.EventEntity
+import com.unityaura.di.IApplicationInjector
 import com.unityaura.model.Event
 import com.unityaura.network.UploadApi
 import com.unityaura.network.UploadResponse
@@ -13,43 +16,47 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.MultipartBody
-import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito
 import retrofit2.Response
+import retrofit2.Retrofit
 import java.io.File
 
 class ConcurrentEventTrackerTest {
 
     private lateinit var fakeDao: FakeEventDao
     private lateinit var fakeApi: FakeUploadApi
-    private lateinit var gson: Gson
-    private lateinit var mockContext: Context
-    private lateinit var tempDir: File
+    private lateinit var tracker: ConcurrentEventTrackerSingleton
 
     @Before
     fun setup() {
         fakeDao = FakeEventDao()
         fakeApi = FakeUploadApi()
-        gson = Gson()
-        tempDir = File(System.getProperty("java.io.tmpdir"), "tracker_test_${System.nanoTime()}")
+        val gson = Gson()
+        val tempDir = File(System.getProperty("java.io.tmpdir"), "tracker_test_${System.nanoTime()}")
         tempDir.mkdirs()
-        mockContext = Mockito.mock(Context::class.java)
+        val mockContext = Mockito.mock(Context::class.java)
         Mockito.`when`(mockContext.cacheDir).thenReturn(tempDir)
+        Mockito.`when`(mockContext.applicationContext).thenReturn(mockContext)
+
+        UnityAuraApplication.injector = FakeInjector(fakeDao, fakeApi, gson, mockContext)
+        ConcurrentEventTrackerSingleton.resetInstance()
+        tracker = ConcurrentEventTrackerSingleton.instance
     }
 
-    private fun createTracker(): ConcurrentEventTrackerSingleton {
-        return ConcurrentEventTrackerSingleton.instance
+    @After
+    fun teardown() {
+        try { tracker.shutdown() } catch (_: Exception) {}
+        ConcurrentEventTrackerSingleton.resetInstance()
     }
 
     @Test
     fun `flush occurs when 5 events are tracked`() = runBlocking {
-        val tracker = createTracker()
-
         repeat(5) { i ->
             tracker.trackEvent(Event(name = "event_$i"))
         }
@@ -57,13 +64,10 @@ class ConcurrentEventTrackerTest {
         delay(500)
 
         assertEquals(5, fakeDao.getEventCount())
-        tracker.shutdown()
     }
 
     @Test
     fun `flush occurs after 10 second timer`() = runBlocking {
-        val tracker = createTracker()
-
         repeat(3) { i ->
             tracker.trackEvent(Event(name = "event_$i"))
         }
@@ -74,13 +78,10 @@ class ConcurrentEventTrackerTest {
         delay(10_500)
 
         assertEquals(3, fakeDao.getEventCount())
-        tracker.shutdown()
     }
 
     @Test
     fun `concurrent trackEvent calls are safe`() = runBlocking {
-        val tracker = createTracker()
-
         val jobs = (0 until 100).map { i ->
             launch {
                 tracker.trackEvent(Event(name = "concurrent_$i"))
@@ -91,13 +92,10 @@ class ConcurrentEventTrackerTest {
         delay(11_000)
 
         assertEquals(100, fakeDao.getEventCount())
-        tracker.shutdown()
     }
 
     @Test
     fun `metadata exceeding 100 keys is rejected`() = runBlocking {
-        val tracker = createTracker()
-
         val largeMetadata = (1..101).associate { "key$it" to "value$it" }
         tracker.trackEvent(Event(name = "large_meta", metadata = largeMetadata))
 
@@ -108,7 +106,6 @@ class ConcurrentEventTrackerTest {
         delay(500)
 
         assertEquals(5, fakeDao.getEventCount())
-        tracker.shutdown()
     }
 
     @Test
@@ -126,8 +123,6 @@ class ConcurrentEventTrackerTest {
             )
         }
 
-        val tracker = createTracker()
-
         repeat(10) { i ->
             tracker.trackEvent(Event(name = "new_$i"))
         }
@@ -135,13 +130,11 @@ class ConcurrentEventTrackerTest {
         delay(1000)
 
         assertTrue(fakeDao.getEventCount() <= 100)
-        tracker.shutdown()
     }
 
     @Test
     fun `upload succeeds and clears events`() = runBlocking {
         fakeApi.shouldSucceed = true
-        val tracker = createTracker()
 
         repeat(5) { i ->
             tracker.trackEvent(Event(name = "upload_$i"))
@@ -153,13 +146,11 @@ class ConcurrentEventTrackerTest {
 
         assertEquals(0, fakeDao.getEventCount())
         assertTrue(tracker.lastUploadResult.value.contains("Success"))
-        tracker.shutdown()
     }
 
     @Test
     fun `upload retries 3 times on failure and keeps events`() = runBlocking {
         fakeApi.shouldSucceed = false
-        val tracker = createTracker()
 
         repeat(5) { i ->
             tracker.trackEvent(Event(name = "fail_$i"))
@@ -171,13 +162,11 @@ class ConcurrentEventTrackerTest {
         assertEquals(3, fakeApi.attemptCount)
         assertEquals(5, fakeDao.getEventCount())
         assertTrue(tracker.lastUploadResult.value.contains("Failed"))
-        tracker.shutdown()
     }
 
     @Test
     fun `upload succeeds on retry`() = runBlocking {
         fakeApi.failUntilAttempt = 2
-        val tracker = createTracker()
 
         repeat(5) { i ->
             tracker.trackEvent(Event(name = "retry_$i"))
@@ -188,13 +177,10 @@ class ConcurrentEventTrackerTest {
 
         assertEquals(0, fakeDao.getEventCount())
         assertTrue(tracker.lastUploadResult.value.contains("Success"))
-        tracker.shutdown()
     }
 
     @Test
     fun `shutdown drains remaining buffer`() = runBlocking {
-        val tracker = createTracker()
-
         repeat(3) { i ->
             tracker.trackEvent(Event(name = "drain_$i"))
         }
@@ -207,7 +193,6 @@ class ConcurrentEventTrackerTest {
 
     @Test
     fun `trackEvent after shutdown does not crash`() = runBlocking {
-        val tracker = createTracker()
         tracker.shutdown()
 
         tracker.trackEvent(Event(name = "after_shutdown"))
@@ -218,8 +203,6 @@ class ConcurrentEventTrackerTest {
 
     @Test
     fun `each event gets unique uuid`() = runBlocking {
-        val tracker = createTracker()
-
         repeat(10) { i ->
             tracker.trackEvent(Event(name = "uuid_$i"))
         }
@@ -228,7 +211,6 @@ class ConcurrentEventTrackerTest {
         val allEvents = fakeDao.getAllEvents()
         val uuids = allEvents.map { it.uuid }.toSet()
         assertEquals(allEvents.size, uuids.size)
-        tracker.shutdown()
     }
 
     @Test
@@ -246,6 +228,17 @@ class ConcurrentEventTrackerTest {
     }
 
     // --- Fakes ---
+
+    class FakeInjector(
+        override val eventDao: EventDao,
+        override val uploadApi: UploadApi,
+        override val gson: Gson,
+        override val context: Context
+    ) : IApplicationInjector {
+        override val retrofit: Retrofit get() = throw UnsupportedOperationException()
+        override val database: AppDatabase get() = throw UnsupportedOperationException()
+        override val eventTracker: IEventTracker get() = throw UnsupportedOperationException()
+    }
 
     class FakeEventDao : EventDao {
         private val events = mutableListOf<EventEntity>()

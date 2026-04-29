@@ -51,10 +51,16 @@ internal class ConcurrentEventTrackerSingleton private constructor(
         private const val MAX_RETRY_ATTEMPTS = 3
         private const val SHUTDOWN_TIMEOUT_MS = 5_000L
 
-        val instance by lazy {
-            ConcurrentEventTrackerSingleton()
-        }
+        @Volatile private var _instance: ConcurrentEventTrackerSingleton? = null
 
+        val instance: ConcurrentEventTrackerSingleton
+            get() = _instance ?: synchronized(this) {
+                _instance ?: ConcurrentEventTrackerSingleton().also { _instance = it }
+            }
+
+        internal fun resetInstance() {
+            _instance = null
+        }
     }
 
     // Channel(UNLIMITED) ensures trySend() never fails due to backpressure.

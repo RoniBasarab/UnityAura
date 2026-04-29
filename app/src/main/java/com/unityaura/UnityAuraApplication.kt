@@ -8,7 +8,7 @@ class UnityAuraApplication : Application() {
 
     companion object {
         lateinit var injector: IApplicationInjector
-            private set
+            internal set
     }
 
     override fun onCreate() {
