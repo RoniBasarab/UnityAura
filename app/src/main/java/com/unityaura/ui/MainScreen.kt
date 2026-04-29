@@ -44,10 +44,17 @@ fun MainScreen(
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Events in DB: ${state.eventCount}")
+                val uploadStatusText = if (state.isUploading) "Uploading..." else state.lastUploadResult
+                val uploadStatusColor = when {
+                    state.lastUploadResult.startsWith("Success") && !state.isUploading ->
+                        MaterialTheme.colorScheme.primary
+                    state.lastUploadResult.startsWith("Failed") && !state.isUploading ->
+                        MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
                 Text(
-                    "Upload Status: ${
-                        if (state.isUploading) "Uploading..." else state.lastUploadResult
-                    }"
+                    text = "Upload Status: $uploadStatusText",
+                    color = uploadStatusColor
                 )
                 if (state.lastFlushTime > 0) {
                     val formatted = SimpleDateFormat("HH:mm:ss", Locale.getDefault())

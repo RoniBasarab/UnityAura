@@ -1,5 +1,6 @@
 package com.unityaura.di
 
+import android.content.Context
 import com.google.gson.Gson
 import com.unityaura.db.AppDatabase
 import com.unityaura.db.EventDao
@@ -8,6 +9,7 @@ import com.unityaura.tracker.IEventTracker
 import retrofit2.Retrofit
 
 interface IApplicationInjector {
+    val context: Context
     val gson: Gson
     val retrofit: Retrofit
     val database: AppDatabase

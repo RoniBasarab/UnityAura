@@ -6,11 +6,12 @@ import com.unityaura.db.AppDatabase
 import com.unityaura.db.EventDao
 import com.unityaura.network.UploadApi
 import com.unityaura.tracker.ConcurrentEventTracker
+import com.unityaura.tracker.ConcurrentEventTrackerSingleton
 import com.unityaura.tracker.IEventTracker
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-class ApplicationInjector(private val context: Context) : IApplicationInjector {
+class ApplicationInjector(override val context: Context) : IApplicationInjector {
 
     override val gson: Gson by lazy { Gson() }
 
@@ -33,12 +34,6 @@ class ApplicationInjector(private val context: Context) : IApplicationInjector {
         retrofit.create(UploadApi::class.java)
     }
 
-    override val eventTracker: IEventTracker by lazy {
-        ConcurrentEventTracker(
-            eventDao = eventDao,
-            uploadApi = uploadApi,
-            gson = gson,
-            context = context
-        )
-    }
+    override val eventTracker: IEventTracker by lazy { ConcurrentEventTrackerSingleton.instance }
+
 }
